@@ -1869,6 +1869,14 @@ export function initExposure(): void {
     },
   );
 
+  contextBridge.exposeInMainWorld('kubernetesMonitoringSubscribeCurrentContext', async (): Promise<void> => {
+    return ipcInvoke('kubernetes-monitoring:subscribeCurrentContext');
+  });
+
+  contextBridge.exposeInMainWorld('kubernetesMonitoringSubscribeNonCurrentContexts', async (): Promise<void> => {
+    return ipcInvoke('kubernetes-monitoring:subscribeNonCurrentContexts');
+  });
+
   contextBridge.exposeInMainWorld('kubernetesGetClusters', async (): Promise<Cluster[]> => {
     return ipcInvoke('kubernetes-client:getClusters');
   });

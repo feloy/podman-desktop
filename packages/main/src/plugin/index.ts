@@ -2576,6 +2576,14 @@ export class PluginSystem {
       },
     );
 
+    this.ipcHandle('kubernetes-monitoring:subscribeCurrentContext', async (_listener): Promise<void> => {
+      return kubernetesClient.subscribeCurrentContextMonitoring();
+    });
+
+    this.ipcHandle('kubernetes-monitoring:subscribeNonCurrentContexts', async (_listener): Promise<void> => {
+      return kubernetesClient.subscribeNonCurrentContextsMonitoring();
+    });
+
     const kubernetesExecCallbackMap = new Map<
       number,
       { onStdIn: (data: string) => void; onResize: (columns: number, rows: number) => void }

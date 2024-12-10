@@ -17,6 +17,8 @@ $: currentContextName = $kubernetesContexts.find(c => c.currentContext)?.name;
 let kubeconfigFilePath: string = '';
 
 onMount(async () => {
+  await window.kubernetesMonitoringSubscribeNonCurrentContexts();
+  await window.kubernetesMonitoringSubscribeCurrentContext();
   try {
     const val: string | undefined = await window.getConfigurationValue('kubernetes.Kubeconfig');
     if (val !== undefined) {
