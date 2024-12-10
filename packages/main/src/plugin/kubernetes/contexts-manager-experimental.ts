@@ -87,6 +87,14 @@ export class ContextsManagerExperimental {
     this.#dispatcher.update(kubeconfig);
   }
 
+  subscribeCurrentContext(): void {
+    this.#dispatcher.subscribeCurrentContext();
+  }
+
+  subscribeNonCurrentContexts(): void {
+    this.#dispatcher.subscribeNonCurrentContexts();
+  }
+
   private async onAdd(event: DispatcherEvent): Promise<void> {
     // register and start health checker
     const previousHealthChecker = this.#healthCheckers.get(event.contextName);

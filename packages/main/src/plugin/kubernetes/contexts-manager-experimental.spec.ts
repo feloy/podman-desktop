@@ -192,6 +192,8 @@ describe('HealthChecker is built and start is called for each context the first 
         }) as unknown as ContextPermissionsChecker,
     );
     manager = new TestContextsManagerExperimental();
+    manager.subscribeCurrentContext();
+    manager.subscribeNonCurrentContexts();
   });
 
   test('when context is not reachable', async () => {
@@ -265,6 +267,8 @@ describe('HealthChecker pass and PermissionsChecker resturns a value', async () 
         }) as unknown as ContextPermissionsChecker,
     );
     manager = new TestContextsManagerExperimental();
+    manager.subscribeCurrentContext();
+    manager.subscribeNonCurrentContexts();
   });
 
   test('informer is started for each resource', async () => {
@@ -296,6 +300,8 @@ test('nothing is done when called again and kubeconfig does not change', async (
   const kc = new KubeConfig();
   kc.loadFromOptions(kcWith2contexts);
   const manager = new TestContextsManagerExperimental();
+  manager.subscribeCurrentContext();
+  manager.subscribeNonCurrentContexts();
 
   const startMock = vi.fn();
   const disposeMock = vi.fn();
@@ -327,6 +333,8 @@ test('HealthChecker is built and start is called for each context being changed'
   const kc = new KubeConfig();
   kc.loadFromOptions(kcWith2contexts);
   const manager = new TestContextsManagerExperimental();
+  manager.subscribeCurrentContext();
+  manager.subscribeNonCurrentContexts();
 
   const startMock = vi.fn();
   const disposeMock = vi.fn();
@@ -360,6 +368,8 @@ test('HealthChecker and PermissionsChecker are disposed for each context being r
   const kc = new KubeConfig();
   kc.loadFromOptions(kcWith2contexts);
   const manager = new TestContextsManagerExperimental();
+  manager.subscribeCurrentContext();
+  manager.subscribeNonCurrentContexts();
 
   const healthStartMock = vi.fn();
   const healthDisposeMock = vi.fn();
@@ -421,6 +431,8 @@ test('getHealthCheckersStates calls getState for each health checker', async () 
   const kc = new KubeConfig();
   kc.loadFromOptions(kcWith2contexts);
   const manager = new TestContextsManagerExperimental();
+  manager.subscribeCurrentContext();
+  manager.subscribeNonCurrentContexts();
 
   const startMock = vi.fn();
   const disposeMock = vi.fn();
@@ -470,6 +482,8 @@ test('getPermissions calls getPermissions for each permissions checker', async (
   const kc = new KubeConfig();
   kc.loadFromOptions(kcWith2contexts);
   const manager = new TestContextsManagerExperimental();
+  manager.subscribeCurrentContext();
+  manager.subscribeNonCurrentContexts();
 
   const startMock = vi.fn();
   const disposeMock = vi.fn();
@@ -520,6 +534,8 @@ test('dispose calls dispose for each health checker', async () => {
   const kc = new KubeConfig();
   kc.loadFromOptions(kcWith2contexts);
   const manager = new TestContextsManagerExperimental();
+  manager.subscribeCurrentContext();
+  manager.subscribeNonCurrentContexts();
 
   const startMock = vi.fn();
   const disposeMock = vi.fn();
@@ -545,6 +561,8 @@ test('dispose calls dispose for each permissions checker', async () => {
   const kc = new KubeConfig();
   kc.loadFromOptions(kcWith2contexts);
   const manager = new TestContextsManagerExperimental();
+  manager.subscribeCurrentContext();
+  manager.subscribeNonCurrentContexts();
 
   const startMock = vi.fn();
   const disposeMock = vi.fn();
