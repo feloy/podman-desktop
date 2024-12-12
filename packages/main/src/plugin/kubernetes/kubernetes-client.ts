@@ -101,6 +101,9 @@ interface ContextsManagerInterface {
   dispose(): void;
   // force the manager to refresh the state for the given context
   refreshContextState(contextName: string): Promise<void>;
+
+  subscribeCurrentContext?(): void;
+  subscribeNonCurrentContexts?(): void;
 }
 
 interface KubernetesObjectWithKind extends KubernetesObject {
@@ -1813,5 +1816,13 @@ export class KubernetesClient {
 
   public async deletePortForward(config: ForwardConfig): Promise<void> {
     return this.ensurePortForwardService().deleteForward(config);
+  }
+
+  public subscribeCurrentContextMonitoring(): void {
+    this.contextsState.subscribeCurrentContext?.();
+  }
+
+  public subscribeNonCurrentContextsMonitoring(): void {
+    this.contextsState.subscribeNonCurrentContexts?.();
   }
 }
