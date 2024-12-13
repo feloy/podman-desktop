@@ -4,6 +4,7 @@ import { Button, EmptyScreen, ErrorMessage, Spinner } from '@podman-desktop/ui-s
 import { onMount } from 'svelte';
 import { router } from 'tinro';
 
+import { kubernetesContextsHealths } from '/@/stores/kubernetes-context-health';
 import { kubernetesContextsCheckingStateDelayed, kubernetesContextsState } from '/@/stores/kubernetes-contexts-state';
 
 import { kubernetesContexts } from '../../stores/kubernetes-contexts';
@@ -15,6 +16,7 @@ import SettingsPage from './SettingsPage.svelte';
 $: currentContextName = $kubernetesContexts.find(c => c.currentContext)?.name;
 
 let kubeconfigFilePath: string = '';
+let experimentalStates: boolean = false;
 
 onMount(async () => {
   try {
@@ -26,6 +28,12 @@ onMount(async () => {
     }
   } catch (error) {
     kubeconfigFilePath = 'Default is usually ~/.kube/config';
+  }
+
+  try {
+    experimentalStates = (await window.getConfigurationValue<boolean>('kubernetes.statesExperimental')) ?? false;
+  } catch {
+    // keep default value
   }
 });
 
@@ -60,6 +68,31 @@ async function handleDeleteContext(contextName: string) {
       $kubernetesContexts = setKubeUIContextError($kubernetesContexts, contextName, e);
     }
   }
+}
+
+function isContextReachable(contextName: string, experimental: boolean): boolean {
+  if (experimental) {
+    return $kubernetesContextsHealths.some(
+      contextHealth => contextHealth.contextName === contextName && contextHealth.reachable,
+    );
+  }
+  return $kubernetesContextsState.get(contextName)?.reachable ?? false;
+}
+
+function isContextKnown(contextName: string, experimental: boolean): boolean {
+  if (experimental) {
+    return $kubernetesContextsHealths.some(contextHealth => contextHealth.contextName === contextName);
+  }
+  return !!$kubernetesContextsState.get(contextName);
+}
+
+function isContextBeingChecked(contextName: string, experimental: boolean): boolean {
+  if (experimental) {
+    return $kubernetesContextsHealths.some(
+      contextHealth => contextHealth.contextName === contextName && contextHealth.checking,
+    );
+  }
+  return !!$kubernetesContextsCheckingStateDelayed?.get(contextName);
 }
 </script>
 
@@ -125,7 +158,7 @@ async function handleDeleteContext(contextName: string) {
         <div class="grow flex-column divide-gray-900 text-[var(--pd-invert-content-card-text)]">
           <div class="flex flex-row">
             <div class="flex-none w-36">
-              {#if $kubernetesContextsState.get(context.name)?.reachable}
+              {#if isContextReachable(context.name, experimentalStates)}
                 <div class="flex flex-row pt-2">
                   <div class="w-3 h-3 rounded-full bg-[var(--pd-status-connected)]"></div>
                   <div
@@ -154,13 +187,13 @@ async function handleDeleteContext(contextName: string) {
                 <div class="flex flex-row pt-2">
                   <div class="w-3 h-3 rounded-full bg-[var(--pd-status-disconnected)]"></div>
                   <div class="ml-1 text-xs text-[var(--pd-status-disconnected)]" aria-label="Context Unreachable">
-                    {#if $kubernetesContextsState.get(context.name)}
+                    {#if isContextKnown(context.name, experimentalStates)}
                       UNREACHABLE
                     {:else}
                       UNKNOWN
                     {/if}
                   </div>
-                  {#if $kubernetesContextsCheckingStateDelayed?.get(context.name)}
+                  {#if isContextBeingChecked(context.name, experimentalStates)}
                     <div class="ml-1"><Spinner size="12px"></Spinner></div>
                   {/if}
                 </div>

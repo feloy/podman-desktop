@@ -28,7 +28,7 @@ import Dockerode from 'dockerode';
 import moment from 'moment';
 import { http, HttpResponse } from 'msw';
 import { setupServer, type SetupServerApi } from 'msw/node';
-import type { PackOptions } from 'tar-fs';
+import type { Headers, PackOptions } from 'tar-fs';
 import * as tarstream from 'tar-stream';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -1220,6 +1220,66 @@ test('pull unknown image fails with error 403', async () => {
   );
 });
 
+test('pulling an image with platform linux/arm64 will add platform to pull options', async () => {
+  // Mock the pulling and dockerode
+  const pullMock = vi.fn();
+  const fakeDockerode = {
+    pull: pullMock,
+    modem: {
+      followProgress: vi.fn(),
+    },
+  } as unknown as Dockerode;
+
+  // This is important, if we do the standard mock of vi.fn(), it WILL get caught in a 5 second timeout
+  // so instead we "fake" the progress to be completed.
+  vi.spyOn(fakeDockerode.modem, 'followProgress').mockImplementation((_s, f, _p) => {
+    return f(null, []);
+  });
+
+  // Add the internal provider
+  containerRegistry.addInternalProvider('podman1', {
+    name: 'podman1',
+    id: 'podman1',
+    connection: {
+      type: 'podman',
+      endpoint: {
+        socketPath: '/podman1.socket',
+      },
+    },
+    api: fakeDockerode,
+    libpodApi: fakeDockerode,
+  } as unknown as InternalContainerProvider);
+
+  // Connection information & testing it
+  const getMatchingEngineFromConnectionSpy = vi.spyOn(containerRegistry, 'getMatchingEngineFromConnection');
+  getMatchingEngineFromConnectionSpy.mockReturnValue(fakeDockerode);
+  const connection = containerRegistry.getFirstRunningPodmanContainerProvider();
+  expect(connection).toBeDefined();
+  const providerConnectionInfo: ProviderContainerConnectionInfo = {
+    name: 'podman1',
+    type: 'podman1',
+    endpoint: {
+      socketPath: '/podman1.socket',
+    },
+    status: 'started',
+  } as unknown as ProviderContainerConnectionInfo;
+
+  // Pull the image and check that we were able to
+  const engine = {
+    getImage: vi.fn().mockReturnValue({ push: vi.fn().mockResolvedValue({ on: vi.fn() }) }),
+  };
+  vi.spyOn(containerRegistry, 'getMatchingEngine').mockReturnValue(engine as unknown as Dockerode);
+  const result = await containerRegistry.pullImage(providerConnectionInfo, 'unknown-image', () => {}, 'linux/arm64');
+  expect(result).toBeUndefined();
+
+  // Check that linux/arm64 was passed in
+  expect(pullMock).toHaveBeenCalledWith('unknown-image', {
+    abortSignal: undefined,
+    authconfig: undefined,
+    platform: 'linux/arm64',
+  });
+});
+
 test('pull unknown image fails with error 401', async () => {
   const getMatchingEngineFromConnectionSpy = vi.spyOn(containerRegistry, 'getMatchingEngineFromConnection');
 
@@ -1588,6 +1648,8 @@ describe('buildImage', () => {
 
     // Mock tar.pack to call the original one with the additional parameter `fs`,
     // virtualizing an fs with empty directories
+    let mapOpts: (header: Headers) => Headers = header => header;
+
     vi.spyOn(tar, 'pack').mockImplementation(
       (dir: string, opts?: PackOptions & { fs?: any }): NodeJS.ReadableStream => {
         const virtfs = {
@@ -1604,6 +1666,7 @@ describe('buildImage', () => {
           }),
         };
         opts = opts ?? {};
+        mapOpts = opts.map ?? mapOpts;
         opts.fs = virtfs;
         return originalTarPack(dir, opts);
       },
@@ -1634,11 +1697,97 @@ describe('buildImage', () => {
 
     archive.pipe(extract);
 
+    // check if function map has been set and then resetting the uid/gid
+    const testEntry = { uid: 500, gid: 500 } as Headers;
+    const afterUpdate = mapOpts?.(testEntry);
+    expect(afterUpdate?.uid).toBe(0);
+    expect(afterUpdate?.gid).toBe(0);
+
     await vi.waitFor(() => {
       expect(entries).toContain('Containerfile.2');
     });
     const options = args?.[1];
     expect(options?.dockerfile).toEqual('./Containerfile.2');
+  });
+
+  test('verify uid/gid set to 0', async () => {
+    const dockerAPI = new Dockerode({ protocol: 'http', host: 'localhost' });
+
+    // set providers with docker being first
+    containerRegistry.addInternalProvider('podman1', {
+      name: 'podman',
+      id: 'podman1',
+      api: dockerAPI,
+      libpodApi: dockerAPI,
+      connection: {
+        type: 'podman',
+        endpoint: {
+          socketPath: '/endpoint1.sock',
+        },
+        name: 'podman',
+      },
+    } as unknown as InternalContainerProvider);
+
+    const connection: ProviderContainerConnectionInfo = {
+      name: 'podman',
+      displayName: 'podman',
+      type: 'podman',
+      endpoint: {
+        socketPath: '/endpoint1.sock',
+      },
+      lifecycleMethods: undefined,
+      status: 'started',
+    };
+
+    vi.spyOn(util, 'isWindows').mockImplementation(() => false);
+    vi.spyOn(dockerAPI, 'buildImage').mockResolvedValue({} as NodeJS.ReadableStream);
+    vi.spyOn(dockerAPI.modem, 'followProgress').mockImplementation((_s, f, _p) => {
+      return f(null, []);
+    });
+
+    vi.mocked(fs.existsSync).mockImplementation(path => {
+      return String(path).endsWith('Containerfile.0') || String(path).endsWith('Containerfile.1');
+    });
+    vi.mocked(dockerAPI.buildImage).mockReset();
+
+    // Mock tar.pack to call the original one with the additional parameter `fs`,
+    // virtualizing an fs with empty directories
+    let mapOpts: (header: Headers) => Headers = header => header;
+
+    vi.spyOn(tar, 'pack').mockImplementation(
+      (dir: string, opts?: PackOptions & { fs?: any }): NodeJS.ReadableStream => {
+        const virtfs = {
+          // all paths exist and are directories
+          lstat: vi.fn().mockImplementation((_path, callback) => {
+            callback(undefined, {
+              isDirectory: () => true,
+              isSocket: () => false,
+            });
+          }),
+          // all directories are empty
+          readdir: vi.fn().mockImplementation((_path, callback) => {
+            callback(undefined, []);
+          }),
+        };
+        const newOpts = opts ?? {};
+        mapOpts = newOpts.map ?? mapOpts;
+        newOpts.fs = virtfs;
+        return originalTarPack(dir, newOpts);
+      },
+    );
+
+    await containerRegistry.buildImage('unknown-directory', () => {}, {
+      containerFile: 'containerfile',
+      tag: 'name',
+      platform: '',
+      provider: connection,
+    });
+
+    // check if function map has been set and then resetting the uid/gid
+    const testEntry = { uid: 500, gid: 500 } as Headers;
+    const afterUpdate = mapOpts?.(testEntry);
+    expect(afterUpdate?.uid).toBe(0);
+    expect(afterUpdate?.gid).toBe(0);
   });
 
   async function verifyBuildImage(extraArgs: object): Promise<void> {
@@ -3947,6 +4096,13 @@ describe('createContainerLibPod', () => {
       pod: 'pod',
       name: 'name',
       HostConfig: {
+        Devices: [
+          {
+            PathOnHost: 'device1',
+            PathInContainer: '',
+            CgroupPermissions: '',
+          },
+        ],
         Mounts: [
           {
             Target: 'destination',
@@ -3959,7 +4115,7 @@ describe('createContainerLibPod', () => {
           },
         ],
         NetworkMode: 'mode',
-        SecurityOpt: ['default'],
+        SecurityOpt: ['default', 'label=disable'],
         PortBindings: {
           '8080': [
             {
@@ -3994,7 +4150,8 @@ describe('createContainerLibPod', () => {
     const expectedOptions: PodmanContainerCreateOptions = {
       name: options.name,
       command: options.Cmd,
-      entrypoint: options.Entrypoint,
+      devices: [{ path: 'device1' }],
+      entrypoint: [options.Entrypoint as string],
       env: {
         key: 'value',
       },
@@ -4015,6 +4172,7 @@ describe('createContainerLibPod', () => {
         nsmode: 'mode',
       },
       seccomp_policy: 'default',
+      selinux_opts: ['disable'],
       portmappings: [
         {
           container_port: 8080,
@@ -4035,6 +4193,121 @@ describe('createContainerLibPod', () => {
       read_only_filesystem: options.HostConfig?.ReadonlyRootfs,
       hostadd: options.HostConfig?.ExtraHosts,
       userns: options.HostConfig?.UsernsMode,
+    };
+    vi.spyOn(containerRegistry, 'attachToContainer').mockImplementation(
+      (
+        _engine: InternalContainerProvider,
+        _container: Dockerode.Container,
+        _hasTty?: boolean,
+        _openStdin?: boolean,
+      ) => {
+        return Promise.resolve();
+      },
+    );
+    await containerRegistry.createContainer('podman1', options);
+    expect(createPodmanContainerMock).toBeCalledWith(expectedOptions);
+
+    // check the case when an array is passed in for Entrypoint
+    createPodmanContainerMock.mockClear();
+    options.Entrypoint = ['array_entrypoint'];
+    expectedOptions.entrypoint = options.Entrypoint;
+    await containerRegistry.createContainer('podman1', options);
+    expect(createPodmanContainerMock).toBeCalledWith(expectedOptions);
+
+    // check the case when an undefined is passed in for Entrypoint
+    createPodmanContainerMock.mockClear();
+    options.Entrypoint = undefined;
+    expectedOptions.entrypoint = options.Entrypoint;
+    await containerRegistry.createContainer('podman1', options);
+    expect(createPodmanContainerMock).toBeCalledWith(expectedOptions);
+
+    // check the case when array with mulpile entries is passed as entrypoint
+    createPodmanContainerMock.mockClear();
+    options.Entrypoint = ['entrypoint', 'arg1'];
+    expectedOptions.entrypoint = options.Entrypoint;
+    await containerRegistry.createContainer('podman1', options);
+    expect(createPodmanContainerMock).toBeCalledWith(expectedOptions);
+  });
+
+  test('check that use of libPod is forced by request for nvidia device', async () => {
+    const dockerAPI = new Dockerode({ protocol: 'http', host: 'localhost' });
+
+    const libpod = new LibpodDockerode();
+    libpod.enhancePrototypeWithLibPod();
+    containerRegistry.addInternalProvider('podman1', {
+      name: 'podman',
+      id: 'podman1',
+      api: dockerAPI,
+      libpodApi: dockerAPI,
+      connection: {
+        type: 'podman',
+      },
+    } as unknown as InternalContainerProvider);
+
+    const createPodmanContainerMock = vi
+      .spyOn(dockerAPI as unknown as LibPod, 'createPodmanContainer')
+      .mockImplementation(_options =>
+        Promise.resolve({
+          Id: 'id',
+          Warnings: [],
+        }),
+      );
+    vi.spyOn(dockerAPI as unknown as Dockerode, 'getContainer').mockImplementation((_id: string) => {
+      return {
+        start: () => {},
+      } as unknown as Dockerode.Container;
+    });
+    // use minimum set as the full of options is validated in the previous test
+    const options: ContainerCreateOptions = {
+      Image: 'image',
+      name: 'name',
+      HostConfig: {
+        Devices: [
+          {
+            PathOnHost: 'nvidia.com/gpu=all',
+            PathInContainer: '',
+            CgroupPermissions: '',
+          },
+        ],
+        NetworkMode: 'mode',
+        AutoRemove: true,
+      },
+      Cmd: ['cmd'],
+      Entrypoint: 'entrypoint',
+      User: 'user',
+    };
+    const expectedOptions: PodmanContainerCreateOptions = {
+      image: options.Image,
+      name: options.name,
+      devices: [{ path: 'nvidia.com/gpu=all' }],
+      netns: {
+        nsmode: 'mode',
+      },
+      command: options.Cmd,
+      entrypoint: [options.Entrypoint as string],
+      user: options.User,
+      cap_add: undefined,
+      cap_drop: undefined,
+      dns_server: undefined,
+      env: undefined,
+      healthconfig: undefined,
+      hostadd: undefined,
+      hostname: undefined,
+      labels: undefined,
+      mounts: undefined,
+      pod: undefined,
+      portmappings: undefined,
+      privileged: undefined,
+      read_only_filesystem: undefined,
+      remove: true,
+      restart_policy: undefined,
+      restart_tries: undefined,
+      seccomp_policy: undefined,
+      seccomp_profile_path: undefined,
+      selinux_opts: [],
+      stop_timeout: undefined,
+      userns: undefined,
+      work_dir: undefined,
     };
     vi.spyOn(containerRegistry, 'attachToContainer').mockImplementation(
       (

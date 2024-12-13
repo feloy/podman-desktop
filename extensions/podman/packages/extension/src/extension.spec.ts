@@ -351,13 +351,17 @@ afterEach(() => {
   console.error = originalConsoleError;
 });
 
-describe.each(['macos', 'windows'])('verify create on %s', os => {
-  const provider = os === 'macos' ? VMTYPE.APPLEHV : VMTYPE.WSL;
+describe.each([
+  { os: 'macos', expectedProvider: VMTYPE.APPLEHV },
+  { os: 'windows-wsl', expectedProvider: VMTYPE.WSL },
+  { os: 'windows-hyperv', expectedProvider: VMTYPE.HYPERV },
+])('verify create on %s', ({ os, expectedProvider }) => {
+  const provider = expectedProvider;
   beforeEach((): void => {
-    vi.mocked(extensionApi.env).isWindows = os === 'windows';
+    vi.mocked(extensionApi.env).isWindows = os !== 'macos';
 
     vi.mocked(util.isMac).mockReturnValue(os === 'macos');
-    setWSLEnabled(true);
+    setWSLEnabled(provider === VMTYPE.WSL);
   });
 
   test('verify create command called with correct values', async () => {
@@ -643,6 +647,36 @@ describe.each(['macos', 'windows'])('verify create on %s', os => {
       expect.arrayContaining([expect.stringContaining('.zst')]),
       expect.anything(),
     );
+  });
+
+  test('verify create command called in airgap mode will try to create image', async () => {
+    vi.mocked(extensionApi.env).isWindows = os !== 'macos';
+    vi.mocked(isMac).mockReturnValue(os === 'macos');
+    vi.mocked(getAssetsFolder).mockReturnValue('fake');
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+
+    const spyExecPromise = vi.spyOn(extensionApi.process, 'exec');
+    spyExecPromise.mockImplementationOnce(() => {
+      return Promise.resolve({} as extensionApi.RunResult);
+    });
+    vi.spyOn(extensionApi.process, 'exec').mockResolvedValueOnce({
+      stdout: 'podman version 5.0.0',
+    } as extensionApi.RunResult);
+
+    await extension.createMachine({
+      'podman.factory.machine.cpus': '2',
+      'podman.factory.machine.memory': '1048000000',
+      'podman.factory.machine.diskSize': '250000000000',
+      'podman.factory.machine.now': true,
+      'podman.factory.machine.win.provider': provider,
+    });
+
+    await vi.waitFor(() => {
+      expect(telemetryLogger.logUsage).toBeCalledWith(
+        'podman.machine.init',
+        expect.objectContaining({ imagePath: provider === VMTYPE.HYPERV ? 'default' : 'embedded' }),
+      );
+    });
   });
 });
 
@@ -3072,4 +3106,86 @@ describe('connectionAuditor', () => {
       false,
     );
   });
+});
+
+// https://github.com/podman-desktop/podman-desktop/issues/10173
+test('activate and autostart should not duplicate machines ', async () => {
+  vi.mocked(isMac).mockReturnValue(true);
+  vi.mocked(extensionApi.env).isWindows = false;
+  vi.mocked(isLinux).mockReturnValue(false);
+  vi.spyOn(PodmanInstall.prototype, 'checkForUpdate').mockResolvedValue({
+    hasUpdate: false,
+  } as unknown as UpdateCheck);
+  const contextMock = {
+    subscriptions: [],
+    secrets: {
+      delete: vi.fn(),
+      get: vi.fn(),
+      onDidChange: vi.fn(),
+      store: vi.fn(),
+    },
+  } as unknown as extensionApi.ExtensionContext;
+
+  // mock getSocketCompatibility
+  const disableMock = vi.fn();
+  const enableMock = vi.fn();
+  const isEnabledMock = vi.fn().mockReturnValue(false);
+  const mock = vi.spyOn(compatibilityModeLib, 'getSocketCompatibility');
+  mock.mockReturnValue({
+    isEnabled: isEnabledMock,
+    enable: enableMock,
+    disable: disableMock,
+    details: '',
+    tooltipText: (): string => {
+      return '';
+    },
+  });
+
+  let podmanMachineListCalls = 0;
+
+  vi.mocked(extensionApi.process.exec).mockImplementation(
+    (_command: string, args?: string[], _options?: extensionApi.RunOptions) =>
+      new Promise<extensionApi.RunResult>(resolve => {
+        if (args?.[0] === '--version') {
+          resolve({
+            stderr: '',
+            stdout: '5.0.0',
+            command: '',
+          });
+          return;
+        }
+
+        if (args?.[0] === 'machine' && args?.[1] === 'list') {
+          podmanMachineListCalls++;
+          resolve({
+            stderr: '',
+            stdout: '[]',
+            command: '',
+          });
+        }
+      }),
+  );
+
+  const api = await extension.activate(contextMock);
+  expect(api).toBeDefined();
+
+  // check that we've registered a autostart provider
+  expect(provider.registerAutostart).toBeCalled();
+  const autoStartMethod = vi.mocked(provider.registerAutostart).mock.calls[0][0] as unknown as {
+    start: () => Promise<void>;
+  };
+
+  // call the autostart method
+  const promiseAutoStart = autoStartMethod?.start();
+
+  // call 100 times monitorMachines
+  for (let i = 0; i < 100; i++) {
+    extension.monitorMachines(provider, podmanConfiguration).catch(() => {});
+  }
+
+  await promiseAutoStart;
+
+  // should be only 1 but we allow some more calls (if there is not a check to check during the autostart it would be 100+ calls)
+  expect(podmanMachineListCalls).toBeLessThan(5);
+  expect(promiseAutoStart).toBeDefined();
 });

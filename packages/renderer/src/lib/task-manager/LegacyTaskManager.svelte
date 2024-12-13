@@ -31,8 +31,8 @@ function handleEscape({ key }: any) {
   }
 }
 
-// listen to the event "toggle-task-manager" to toggle the task manager
-window.events?.receive('toggle-task-manager', () => {
+// listen to the event "toggle-legacy-task-manager" to toggle the task manager
+window.events?.receive('toggle-legacy-task-manager', () => {
   showTaskManager = !showTaskManager;
 });
 </script>
@@ -58,11 +58,6 @@ window.events?.receive('toggle-task-manager', () => {
           <TaskIcon size="15" />
           <div class="text-xs uppercase ml-2">tasks</div>
           <div class="flex-1"></div>
-          <!--
-          <div title="Toggle Do Not Disturb Mode" class="cursor-pointer hover:bg-charcoal-600 p-1">
-            <BellSlashIcon size="15" />
-          </div>
-          -->
           <button
             on:click={() => hide()}
             title="Hide (Escape)"

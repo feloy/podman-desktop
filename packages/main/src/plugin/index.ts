@@ -87,6 +87,7 @@ import type { ImageInfo } from '/@api/image-info.js';
 import type { ImageInspectInfo } from '/@api/image-inspect-info.js';
 import type { ImageSearchOptions, ImageSearchResult, ImageTagsListOptions } from '/@api/image-registry.js';
 import type { KubeContext } from '/@api/kubernetes-context.js';
+import type { ContextHealth } from '/@api/kubernetes-contexts-healths.js';
 import type { ContextGeneralState, ResourceName } from '/@api/kubernetes-contexts-states.js';
 import type { ForwardConfig, ForwardOptions } from '/@api/kubernetes-port-forward-model.js';
 import type { ManifestCreateOptions, ManifestInspectInfo, ManifestPushOptions } from '/@api/manifest-info.js';
@@ -472,9 +473,6 @@ export class PluginSystem {
 
     const telemetry = new Telemetry(configurationRegistry);
     await telemetry.init();
-
-    const feedback = new FeedbackHandler();
-
     const exec = new Exec(proxy);
 
     const commandRegistry = new CommandRegistry(apiSender, telemetry);
@@ -703,6 +701,8 @@ export class PluginSystem {
       certificates,
     );
     await this.extensionLoader.init();
+
+    const feedback = new FeedbackHandler(this.extensionLoader);
 
     const extensionsCatalog = new ExtensionsCatalog(certificates, proxy, configurationRegistry, apiSender);
     extensionsCatalog.init();
@@ -1082,10 +1082,16 @@ export class PluginSystem {
         providerContainerConnectionInfo: ProviderContainerConnectionInfo,
         imageName: string,
         callbackId: number,
+        platform?: string,
       ): Promise<void> => {
-        return containerProviderRegistry.pullImage(providerContainerConnectionInfo, imageName, (event: PullEvent) => {
-          this.getWebContentsSender().send('container-provider-registry:pullImage-onData', callbackId, event);
-        });
+        return containerProviderRegistry.pullImage(
+          providerContainerConnectionInfo,
+          imageName,
+          (event: PullEvent) => {
+            this.getWebContentsSender().send('container-provider-registry:pullImage-onData', callbackId, event);
+          },
+          platform,
+        );
       },
     );
     this.ipcHandle(
@@ -1284,7 +1290,7 @@ export class PluginSystem {
       ): Promise<unknown> => {
         // create task
         const task = taskManager.createTask({
-          title: `Build ${imageName}`,
+          title: `Building ${imageName}`,
           action: {
             name: 'Go to task >',
             execute: () => {
@@ -1334,8 +1340,9 @@ export class PluginSystem {
       'container-provider-registry:exportContainer',
       async (_listener, engine: string, options: ContainerExportOptions): Promise<void> => {
         // create task
+        const containerId = options.id.startsWith('sha256:') ? options.id.substring('sha256:'.length) : options.id;
         const task = taskManager.createTask({
-          title: 'Export container',
+          title: `Exporting ${containerId.substring(0, 12) ?? 'container'}`,
           action: {
             name: 'Open folder',
             execute: (): void => {
@@ -1364,7 +1371,7 @@ export class PluginSystem {
       async (_listener, options: ContainerImportOptions): Promise<void> => {
         // create task
         const task = taskManager.createTask({
-          title: 'Import container',
+          title: `Importing ${options.imageTag ?? 'container'}`,
         });
         // wrap the logic to handle potential error
         return containerProviderRegistry
@@ -1385,7 +1392,7 @@ export class PluginSystem {
       async (_listener, options: ImagesSaveOptions): Promise<void> => {
         // create task
         const task = taskManager.createTask({
-          title: 'Save images',
+          title: `Saving image${options.images.length > 1 ? 's' : ''}`,
         });
         // wrap the logic to handle potential error
         return containerProviderRegistry
@@ -1406,7 +1413,7 @@ export class PluginSystem {
       async (_listener, options: ImageLoadOptions): Promise<void> => {
         // create task
         const task = taskManager.createTask({
-          title: 'Load images',
+          title: `Loading image${options.archives.length > 1 ? 's' : ''}`,
         });
         // wrap the logic to handle potential error
         return containerProviderRegistry
@@ -1501,7 +1508,7 @@ export class PluginSystem {
 
         // create task
         const task = taskManager.createTask({
-          title: `Update ${tool.name} to v${version}`,
+          title: `Updating ${tool.name} to v${version}`,
           action: {
             name: 'goto task >',
             execute: (): void => {
@@ -1543,7 +1550,7 @@ export class PluginSystem {
 
         // create task
         const task = taskManager.createTask({
-          title: `Install ${tool.name} to v${versionToInstall}`,
+          title: `Installing ${tool.name} to v${versionToInstall}`,
           action: {
             name: 'goto task >',
             execute: (): void => {
@@ -1578,7 +1585,7 @@ export class PluginSystem {
 
         // create task
         const task = taskManager.createTask({
-          title: `Uninstall ${tool.name} v${tool.version}`,
+          title: `Uninstalling ${tool.name} v${tool.version}`,
           action: {
             name: 'goto task >',
             execute: (): void => {
@@ -2077,7 +2084,7 @@ export class PluginSystem {
         loggerId: string,
       ): Promise<void> => {
         const task = taskManager.createTask({
-          title: `Start ${providerConnectionInfo.name}`,
+          title: `Starting ${providerConnectionInfo.name}`,
           action: {
             name: 'Go to task >',
             execute: () => {
@@ -2113,7 +2120,7 @@ export class PluginSystem {
         loggerId: string,
       ): Promise<void> => {
         const task = taskManager.createTask({
-          title: `Stop ${providerConnectionInfo.name}`,
+          title: `Stopping ${providerConnectionInfo.name}`,
           action: {
             name: 'Go to task >',
             execute: () => {
@@ -2160,7 +2167,7 @@ export class PluginSystem {
         }
 
         const task = taskManager.createTask({
-          title: `Create Container provider`,
+          title: `Creating ${providerConnectionInfo.name} provider`,
           action: {
             name: 'Open task',
             execute: () => {
@@ -2195,7 +2202,7 @@ export class PluginSystem {
         loggerId: string,
       ): Promise<void> => {
         const task = taskManager.createTask({
-          title: `Delete ${providerConnectionInfo.name}`,
+          title: `Deleting ${providerConnectionInfo.name}`,
           action: {
             name: 'Go to resources',
             execute: () => {
@@ -2239,8 +2246,9 @@ export class PluginSystem {
           token = tokenSource?.token;
         }
 
+        const providerName = providerRegistry.getProviderInfo(internalProviderId)?.name;
         const task = taskManager.createTask({
-          title: `Create Container provider`,
+          title: `Creating ${providerName ? providerName : 'Container'} provider`,
           action: {
             name: 'Open task',
             execute: () => {
@@ -2296,8 +2304,9 @@ export class PluginSystem {
           token = tokenSource?.token;
         }
 
+        const providerName = providerRegistry.getProviderInfo(internalProviderId)?.name;
         const task = taskManager.createTask({
-          title: `Create Kubernetes provider`,
+          title: `Creating ${providerName ? providerName : 'Kubernetes'} provider`,
           action: {
             name: 'Open task',
             execute: () => {
@@ -2575,6 +2584,10 @@ export class PluginSystem {
         return kubernetesClient.unregisterGetCurrentContextResources(resourceName);
       },
     );
+
+    this.ipcHandle('kubernetes:getContextsHealths', async (_listener): Promise<ContextHealth[]> => {
+      return kubernetesClient.getContextsHealths();
+    });
 
     const kubernetesExecCallbackMap = new Map<
       number,
