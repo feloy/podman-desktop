@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (C) 2024 Red Hat, Inc.
+ * Copyright (C) 2024 - 2025 Red Hat, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -89,6 +89,8 @@ export interface ResourceFactory {
   get resource(): string;
   permissions?: ResourcePermissionsFactory;
   informer?: ResourceInformerFactory;
+  // isActive returns true if `resource` is considered active
+  isActive?(resource: KubernetesObject): boolean;
   copyWithSlicedPermissions(): ResourceFactory;
 }
 

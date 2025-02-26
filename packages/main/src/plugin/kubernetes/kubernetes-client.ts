@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (C) 2022-2024 Red Hat, Inc.
+ * Copyright (C) 2022-2025 Red Hat, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -1736,6 +1736,13 @@ export class KubernetesClient {
       throw new Error('contextsStatesDispatcher is undefined. This should not happen in Kubernetes experimental');
     }
     return this.contextsStatesDispatcher.getResourcesCount();
+  }
+
+  public getActiveResourcesCount(): ResourceCount[] {
+    if (!this.contextsStatesDispatcher) {
+      throw new Error('contextsStatesDispatcher is undefined. This should not happen in Kubernetes experimental');
+    }
+    return this.contextsStatesDispatcher.getActiveResourcesCount();
   }
 
   public getResources(contextNames: string[], resourceName: string): KubernetesContextResources[] {

@@ -55,4 +55,10 @@ export class NodesResourceFactory extends ResourceFactoryBase implements Resourc
     const path = `/api/v1/nodes`;
     return new ResourceInformer<V1Node>({ kubeconfig, path, listFn, kind: 'Node', plural: 'nodes' });
   }
+
+  isActive(node: V1Node): boolean {
+    return (
+      node.status?.conditions?.some(condition => condition.type === 'Ready' && condition.status === 'True') ?? false
+    );
+  }
 }

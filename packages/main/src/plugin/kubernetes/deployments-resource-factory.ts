@@ -57,4 +57,8 @@ export class DeploymentsResourceFactory extends ResourceFactoryBase implements R
     const path = `/apis/apps/v1/namespaces/${namespace}/deployments`;
     return new ResourceInformer<V1Deployment>({ kubeconfig, path, listFn, kind: 'Deployment', plural: 'deployments' });
   }
+
+  isActive(deployment: V1Deployment): boolean {
+    return (deployment.spec?.replicas ?? 0) > 0;
+  }
 }

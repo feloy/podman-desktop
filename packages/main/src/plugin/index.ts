@@ -2670,6 +2670,10 @@ export class PluginSystem {
       return kubernetesClient.getResourcesCount();
     });
 
+    this.ipcHandle('kubernetes:getActiveResourcesCount', async (_listener): Promise<ResourceCount[]> => {
+      return kubernetesClient.getActiveResourcesCount();
+    });
+
     this.ipcHandle(
       'kubernetes:getResources',
       async (_listener, contextNames: string[], resourceName: string): Promise<KubernetesContextResources[]> => {
