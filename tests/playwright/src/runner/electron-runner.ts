@@ -102,9 +102,41 @@ export class ElectronRunner extends Runner {
       Object.keys(this._options).forEach(key => {
         console.log(`${key}: ${(this._options as { [k: string]: string })[key]}`);
       });
+      const options = this._options as Parameters<typeof electron.launch>[0];
+      const env = options?.env ?? process.env;
+      // Playwright only installs its readiness barrier when executablePath is omitted.
+      // Allow disabling our equivalent barrier for controlled startup comparisons.
+      const startupHandshake = env.PODMAN_DESKTOP_E2E_STARTUP_HANDSHAKE ?? (options?.executablePath ? '1' : '0');
+      console.log(
+        startupHandshake === '1'
+          ? '[startup handshake] Enabled for this Electron launch'
+          : '[startup handshake] Disabled for this Electron launch',
+      );
       this._app = await electron.launch({
-        ...this._options,
+        ...options,
+        env: {
+          ...env,
+          PODMAN_DESKTOP_E2E_STARTUP_HANDSHAKE: startupHandshake,
+        },
       });
+      if (startupHandshake === '1') {
+        // Attach before release so the app-ready gate is visible in CI logs.
+        const electronProcess = this.getElectronApp().process();
+        electronProcess.stdout?.on('data', data => {
+          console.log(`[Electron PID ${electronProcess.pid}] STDOUT: ${data}`);
+        });
+        const released = await this.raceWithTimeout(
+          // Signal the main process before firstWindow(), while no renderer is needed.
+          this.getElectronApp().evaluate(({ app }) => app.emit('podman-desktop:playwright-ready')),
+          5_000,
+          'Releasing the Playwright startup handshake timed out',
+        );
+        console.log(
+          released
+            ? '[startup handshake] Playwright signal delivered to the app-ready gate'
+            : '[startup handshake] App-ready gate unavailable in this binary; continuing without it',
+        );
+      }
       this._page = await this.getElectronApp().firstWindow();
       this._running = true;
 
